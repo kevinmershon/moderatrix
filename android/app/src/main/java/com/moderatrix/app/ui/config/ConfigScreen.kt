@@ -8,27 +8,60 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.moderatrix.app.data.db.ActivityDefEntity
+import com.moderatrix.app.data.db.CategoryEntity
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
+
+private sealed interface ConfigRow {
+    data class Settings(val placeholder: Unit = Unit) : ConfigRow
+    data class CategoriesHeader(val placeholder: Unit = Unit) : ConfigRow
+    data class CategoryRow(val category: CategoryEntity, val isFirst: Boolean, val isLast: Boolean) : ConfigRow
+    data class AddCategory(val placeholder: Unit = Unit) : ConfigRow
+    data class ActivitiesHeader(val placeholder: Unit = Unit) : ConfigRow
+    data class CategoryActivitiesHeader(val category: CategoryEntity) : ConfigRow
+    data class ActivityRow(val activity: ActivityDefEntity) : ConfigRow
+    data class AddActivity(val placeholder: Unit = Unit) : ConfigRow
+}
+
+private fun ConfigRow.key(): Any = when (this) {
+    is ConfigRow.Settings -> "settings"
+    is ConfigRow.CategoriesHeader -> "categories_header"
+    is ConfigRow.CategoryRow -> "category_${category.id}"
+    is ConfigRow.AddCategory -> "add_category"
+    is ConfigRow.ActivitiesHeader -> "activities_header"
+    is ConfigRow.CategoryActivitiesHeader -> "activities_header_${category.id}"
+    is ConfigRow.ActivityRow -> "activity_${activity.id}"
+    is ConfigRow.AddActivity -> "add_activity"
+}
 
 @Composable
 fun ConfigScreen(viewModel: ConfigViewModel = viewModel()) {
@@ -41,6 +74,14 @@ fun ConfigScreen(viewModel: ConfigViewModel = viewModel()) {
     var serverUrlField by remember(state.serverUrl) { mutableStateOf(state.serverUrl) }
     var categoryMenuExpanded by remember { mutableStateOf(false) }
     var editingActivity by remember { mutableStateOf<ActivityDefEntity?>(null) }
+
+    // Local working order of activities, per category, so a drag feels immediate; committed to
+    // the ViewModel (and thus the server) once the drag ends. Rebuilt whenever the underlying
+    // data changes for reasons other than our own optimistic reorder (e.g. initial load, remote pull).
+    var localActivityOrder by remember { mutableStateOf(state.activities) }
+    LaunchedEffect(state.activities.map { it.id to it.categoryId to it.sortOrder }) {
+        localActivityOrder = state.activities
+    }
 
     editingActivity?.let { activity ->
         EditActivityDialog(
@@ -58,129 +99,222 @@ fun ConfigScreen(viewModel: ConfigViewModel = viewModel()) {
         )
     }
 
-    LazyColumn(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-        item {
-            Text("Settings", style = MaterialTheme.typography.headlineSmall)
-            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    OutlinedTextField(
-                        value = serverUrlField,
-                        onValueChange = { serverUrlField = it },
-                        label = { Text("Server base URL") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Row(modifier = Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { viewModel.setServerUrl(serverUrlField) }) {
-                            Text("Save URL")
-                        }
-                        OutlinedButton(onClick = { viewModel.syncNow() }) {
-                            Text("Sync now")
+    val rows = buildList {
+        add(ConfigRow.Settings())
+        add(ConfigRow.CategoriesHeader())
+        state.categories.forEachIndexed { index, category ->
+            add(ConfigRow.CategoryRow(category, isFirst = index == 0, isLast = index == state.categories.lastIndex))
+        }
+        add(ConfigRow.AddCategory())
+        add(ConfigRow.ActivitiesHeader())
+        state.categories.forEach { category ->
+            val activitiesInCategory = localActivityOrder.filter { !it.archived && it.categoryId == category.id }
+            if (activitiesInCategory.isEmpty()) return@forEach
+            add(ConfigRow.CategoryActivitiesHeader(category))
+            activitiesInCategory.forEach { add(ConfigRow.ActivityRow(it)) }
+        }
+        add(ConfigRow.AddActivity())
+    }
+
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val reorderableState = rememberReorderableLazyListState(listState) { from, to ->
+        val fromRow = rows.getOrNull(from.index) as? ConfigRow.ActivityRow ?: return@rememberReorderableLazyListState
+        val toRow = rows.getOrNull(to.index) as? ConfigRow.ActivityRow ?: return@rememberReorderableLazyListState
+        if (fromRow.activity.categoryId != toRow.activity.categoryId) return@rememberReorderableLazyListState
+
+        val categoryId = fromRow.activity.categoryId
+        val withinCategory = localActivityOrder.filter { !it.archived && it.categoryId == categoryId }
+        val fromIndex = withinCategory.indexOfFirst { it.id == fromRow.activity.id }
+        val toIndex = withinCategory.indexOfFirst { it.id == toRow.activity.id }
+        if (fromIndex == -1 || toIndex == -1) return@rememberReorderableLazyListState
+
+        val reordered = withinCategory.toMutableList().apply { add(toIndex, removeAt(fromIndex)) }
+        val others = localActivityOrder.filterNot { !it.archived && it.categoryId == categoryId }
+        localActivityOrder = others + reordered
+    }
+
+    LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+        items(rows, key = { it.key() }) { row ->
+            when (row) {
+                is ConfigRow.Settings -> {
+                    Text("Settings", style = MaterialTheme.typography.headlineSmall)
+                    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            OutlinedTextField(
+                                value = serverUrlField,
+                                onValueChange = { serverUrlField = it },
+                                label = { Text("Server base URL") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Row(
+                                modifier = Modifier.padding(top = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(onClick = { viewModel.setServerUrl(serverUrlField) }) {
+                                    Text("Save URL")
+                                }
+                                OutlinedButton(onClick = { viewModel.syncNow() }) {
+                                    Text("Sync now")
+                                }
+                            }
                         }
                     }
                 }
-            }
-        }
 
-        item {
-            Text("Categories", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
-        }
-        items(state.categories) { category ->
-            Text("• ${category.name}", modifier = Modifier.padding(vertical = 2.dp))
-        }
-        item {
-            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                OutlinedTextField(
-                    value = newCategoryName,
-                    onValueChange = { newCategoryName = it },
-                    label = { Text("New category") },
-                    modifier = Modifier.weight(1f)
-                )
-                TextButton(onClick = {
-                    if (newCategoryName.isNotBlank()) {
-                        viewModel.addCategory(newCategoryName)
-                        newCategoryName = ""
-                    }
-                }) { Text("Add") }
-            }
-        }
-
-        item {
-            Text(
-                "Activities (tap to edit)",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(top = 8.dp)
-            )
-        }
-        items(state.activities.filter { !it.archived }) { activity ->
-            val categoryName = state.categories.find { it.id == activity.categoryId }?.name ?: activity.categoryId
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp)
-                    .clickable { editingActivity = activity },
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
-                    Text(activity.name)
+                is ConfigRow.CategoriesHeader -> {
                     Text(
-                        "$categoryName · ${activity.targetFreqPerWeek}x/wk · " + periodSummary(activity),
-                        style = MaterialTheme.typography.bodySmall
+                        "Categories (use arrows to reorder)",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(top = 8.dp)
                     )
                 }
-            }
-        }
 
-        item {
-            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text("Add activity", style = MaterialTheme.typography.titleSmall)
-
-                    OutlinedTextField(
-                        value = newActivityName,
-                        onValueChange = { newActivityName = it },
-                        label = { Text("Activity name") },
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
-                    )
-
-                    Row(modifier = Modifier.padding(top = 4.dp)) {
-                        OutlinedButton(onClick = { categoryMenuExpanded = true }) {
-                            val label = state.categories.find { it.id == selectedCategoryId }?.name ?: "Category"
-                            Text(label)
-                        }
-                        DropdownMenu(
-                            expanded = categoryMenuExpanded,
-                            onDismissRequest = { categoryMenuExpanded = false }
+                is ConfigRow.CategoryRow -> {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                    ) {
+                        Text(row.category.name, modifier = Modifier.weight(1f))
+                        IconButton(
+                            enabled = !row.isFirst,
+                            onClick = { viewModel.moveCategory(row.category, -1) }
                         ) {
-                            state.categories.forEach { category ->
-                                DropdownMenuItem(
-                                    text = { Text(category.name) },
-                                    onClick = {
-                                        selectedCategoryId = category.id
-                                        categoryMenuExpanded = false
-                                    }
+                            Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Move up")
+                        }
+                        IconButton(
+                            enabled = !row.isLast,
+                            onClick = { viewModel.moveCategory(row.category, 1) }
+                        ) {
+                            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Move down")
+                        }
+                    }
+                }
+
+                is ConfigRow.AddCategory -> {
+                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                        OutlinedTextField(
+                            value = newCategoryName,
+                            onValueChange = { newCategoryName = it },
+                            label = { Text("New category") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = {
+                            if (newCategoryName.isNotBlank()) {
+                                viewModel.addCategory(newCategoryName)
+                                newCategoryName = ""
+                            }
+                        }) { Text("Add") }
+                    }
+                }
+
+                is ConfigRow.ActivitiesHeader -> {
+                    Text(
+                        "Activities (tap to edit, drag handle to reorder within a category)",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+
+                is ConfigRow.CategoryActivitiesHeader -> {
+                    Text(
+                        row.category.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+
+                is ConfigRow.ActivityRow -> {
+                    ReorderableItem(reorderableState, key = row.key()) { _ ->
+                        val activity = row.activity
+                        Card(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp)
+                                    .clickable { editingActivity = activity }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Menu,
+                                    contentDescription = "Drag to reorder",
+                                    modifier = Modifier
+                                        .padding(end = 8.dp)
+                                        .draggableHandle(
+                                            onDragStopped = {
+                                                val categoryId = activity.categoryId
+                                                val newOrder = localActivityOrder.filter {
+                                                    !it.archived && it.categoryId == categoryId
+                                                }
+                                                viewModel.reorderActivities(newOrder)
+                                            }
+                                        )
                                 )
+                                Column {
+                                    Text(activity.name)
+                                    Text(
+                                        "${activity.targetFreqPerWeek}x/wk · " + periodSummary(activity),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
                             }
                         }
                     }
+                }
 
-                    OutlinedTextField(
-                        value = newActivityFreq,
-                        onValueChange = { newActivityFreq = it.filter { c -> c.isDigit() } },
-                        label = { Text("Target freq / week") },
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
-                    )
+                is ConfigRow.AddActivity -> {
+                    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text("Add activity", style = MaterialTheme.typography.titleSmall)
 
-                    Button(
-                        onClick = {
-                            val freq = newActivityFreq.toIntOrNull() ?: 1
-                            if (newActivityName.isNotBlank() && selectedCategoryId.isNotBlank()) {
-                                viewModel.createActivity(selectedCategoryId, newActivityName, freq)
-                                newActivityName = ""
+                            OutlinedTextField(
+                                value = newActivityName,
+                                onValueChange = { newActivityName = it },
+                                label = { Text("Activity name") },
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                            )
+
+                            Row(modifier = Modifier.padding(top = 4.dp)) {
+                                OutlinedButton(onClick = { categoryMenuExpanded = true }) {
+                                    val label = state.categories.find { it.id == selectedCategoryId }?.name
+                                        ?: "Category"
+                                    Text(label)
+                                }
+                                DropdownMenu(
+                                    expanded = categoryMenuExpanded,
+                                    onDismissRequest = { categoryMenuExpanded = false }
+                                ) {
+                                    state.categories.forEach { category ->
+                                        DropdownMenuItem(
+                                            text = { Text(category.name) },
+                                            onClick = {
+                                                selectedCategoryId = category.id
+                                                categoryMenuExpanded = false
+                                            }
+                                        )
+                                    }
+                                }
                             }
-                        },
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                    ) {
-                        Text("Add activity")
+
+                            OutlinedTextField(
+                                value = newActivityFreq,
+                                onValueChange = { newActivityFreq = it.filter { c -> c.isDigit() } },
+                                label = { Text("Target freq / week") },
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                            )
+
+                            Button(
+                                onClick = {
+                                    val freq = newActivityFreq.toIntOrNull() ?: 1
+                                    if (newActivityName.isNotBlank() && selectedCategoryId.isNotBlank()) {
+                                        viewModel.createActivity(selectedCategoryId, newActivityName, freq)
+                                        newActivityName = ""
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                            ) {
+                                Text("Add activity")
+                            }
+                        }
                     }
                 }
             }
@@ -199,7 +333,7 @@ private fun periodSummary(activity: ActivityDefEntity): String {
 @Composable
 private fun EditActivityDialog(
     activity: ActivityDefEntity,
-    categories: List<com.moderatrix.app.data.db.CategoryEntity>,
+    categories: List<CategoryEntity>,
     onDismiss: () -> Unit,
     onSave: (ActivityDefEntity) -> Unit,
     onRemove: () -> Unit
@@ -252,17 +386,21 @@ private fun EditActivityDialog(
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                 )
 
-                Text("Available during", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 12.dp))
+                Text(
+                    "Available during",
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(top = 12.dp)
+                )
 
-                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = morning, onCheckedChange = { morning = it })
                     Text("Morning")
                 }
-                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = noon, onCheckedChange = { noon = it })
                     Text("Noon")
                 }
-                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = night, onCheckedChange = { night = it })
                     Text("Night")
                 }

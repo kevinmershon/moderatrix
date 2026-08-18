@@ -68,6 +68,21 @@ class ConfigViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /** Swaps [category] with its neighbor [delta] positions away (-1 = up, +1 = down). */
+    fun moveCategory(category: CategoryEntity, delta: Int) {
+        viewModelScope.launch {
+            val ordered = uiState.value.categories
+            val index = ordered.indexOfFirst { it.id == category.id }
+            val targetIndex = index + delta
+            if (index == -1 || targetIndex !in ordered.indices) return@launch
+
+            val reordered = ordered.toMutableList().apply {
+                add(targetIndex, removeAt(index))
+            }
+            repo.reorderCategories(reordered)
+        }
+    }
+
     /** Full in-place edit: name, category, freq, and morning/noon/night applicability. */
     fun saveActivity(activity: ActivityDefEntity) {
         viewModelScope.launch {
