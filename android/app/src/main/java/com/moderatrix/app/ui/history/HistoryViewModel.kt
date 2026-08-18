@@ -24,7 +24,13 @@ class HistoryViewModel(application: Application) : AndroidViewModel(application)
     private val _days = MutableStateFlow<List<HistoryDay>>(emptyList())
     val days: StateFlow<List<HistoryDay>> = _days.asStateFlow()
 
+    private val _activityNames = MutableStateFlow<Map<String, String>>(emptyMap())
+    val activityNames: StateFlow<Map<String, String>> = _activityNames.asStateFlow()
+
     init {
+        viewModelScope.launch {
+            _activityNames.value = repo.getAllActivities().associate { it.id to it.name }
+        }
         loadLastDays(14)
     }
 
