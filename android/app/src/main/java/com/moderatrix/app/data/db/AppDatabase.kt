@@ -13,7 +13,7 @@ import androidx.room.TypeConverters
         CategoryEntity::class,
         ActivityDefEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 @TypeConverters(Converters::class)

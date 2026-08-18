@@ -49,6 +49,18 @@ class ModeratrixRepo(context: Context) {
         configDao.upsertCategory(category)
     }
 
+    /** Persists a full reordering of categories (list order = new sortOrder). */
+    suspend fun reorderCategories(orderedCategories: List<CategoryEntity>) {
+        configDao.upsertCategories(orderedCategories.mapIndexed { index, c -> c.copy(sortOrder = index) })
+        pushConfig()
+    }
+
+    /** Persists a full reordering of one category's activities (list order = new sortOrder). */
+    suspend fun reorderActivities(orderedActivities: List<ActivityDefEntity>) {
+        configDao.upsertActivities(orderedActivities.mapIndexed { index, a -> a.copy(sortOrder = index) })
+        pushConfig()
+    }
+
     fun observeActivityEntries(date: LocalDate): Flow<List<ActivityEntryEntity>> =
         activityDao.observeForDate(date.toString())
 
@@ -189,11 +201,11 @@ class ModeratrixRepo(context: Context) {
         return try {
             val cfg = api.getConfig()
             configDao.replaceAll(
-                cfg.categories.map { CategoryEntity(it.id, it.name) },
+                cfg.categories.map { CategoryEntity(it.id, it.name, it.sortOrder) },
                 cfg.activities.map {
                     ActivityDefEntity(
                         it.id, it.categoryId, it.name, it.targetFreqPerWeek, it.archived,
-                        it.availableMorning, it.availableNoon, it.availableNight
+                        it.availableMorning, it.availableNoon, it.availableNight, it.sortOrder
                     )
                 }
             )
@@ -212,11 +224,11 @@ class ModeratrixRepo(context: Context) {
             val activities = configDao.getAllActivities()
             api.putConfig(
                 ApiConfig(
-                    categories = categories.map { ApiCategory(it.id, it.name) },
+                    categories = categories.map { ApiCategory(it.id, it.name, it.sortOrder) },
                     activities = activities.map {
                         ApiActivity(
                             it.id, it.categoryId, it.name, it.targetFreqPerWeek, it.archived,
-                            it.availableMorning, it.availableNoon, it.availableNight
+                            it.availableMorning, it.availableNoon, it.availableNight, it.sortOrder
                         )
                     }
                 )

@@ -35,7 +35,8 @@ data class VitalsEntryEntity(
 @Entity(tableName = "categories")
 data class CategoryEntity(
     @PrimaryKey val id: String,
-    val name: String
+    val name: String,
+    val sortOrder: Int = 0
 )
 
 @Entity(tableName = "activities")
@@ -47,7 +48,8 @@ data class ActivityDefEntity(
     val archived: Boolean,
     val availableMorning: Boolean = true,
     val availableNoon: Boolean = true,
-    val availableNight: Boolean = true
+    val availableNight: Boolean = true,
+    val sortOrder: Int = 0
 ) {
     fun isAvailableFor(period: Period): Boolean = when (period) {
         Period.MORNING -> availableMorning

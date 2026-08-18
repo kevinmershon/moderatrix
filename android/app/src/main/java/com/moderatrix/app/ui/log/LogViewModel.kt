@@ -77,4 +77,7 @@ class LogViewModel(application: Application) : AndroidViewModel(application) {
 
     fun isDoneForPeriod(activityId: String, period: Period, state: LogUiState): Boolean =
         state.entriesToday.any { it.activityId == activityId && it.period == period && it.done }
+
+    fun latestVitalsForPeriod(period: Period, state: LogUiState): VitalsEntryEntity? =
+        state.vitalsToday.filter { it.period == period }.maxByOrNull { it.recordedAtEpochMs }
 }

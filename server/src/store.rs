@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
 use parking_lot::RwLock;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 
@@ -11,11 +11,13 @@ const ACTIVITY_LOG_CSV: &str = "activity_log.csv";
 const VITALS_LOG_CSV: &str = "vitals_log.csv";
 const CONFIG_JSON: &str = "config.json";
 
+type VitalsKey = (String, String); // (date, period)
+
 pub struct Store {
     data_dir: PathBuf,
     config: RwLock<Config>,
     activity_ids_seen: RwLock<HashSet<String>>,
-    vitals_ids_seen: RwLock<HashSet<String>>,
+    vitals_by_key: RwLock<HashMap<VitalsKey, VitalsRow>>,
 }
 
 fn default_config() -> Config {
@@ -28,9 +30,11 @@ fn default_config() -> Config {
     ];
     let categories: Vec<Category> = cats
         .iter()
-        .map(|(id, name)| Category {
+        .enumerate()
+        .map(|(index, (id, name))| Category {
             id: id.to_string(),
             name: name.to_string(),
+            sort_order: index as i32,
         })
         .collect();
 
@@ -61,17 +65,26 @@ fn default_config() -> Config {
         ("contradictory_factors", "high_leisure_screen_time", "High Leisure Screen Time", 0, true, true, true),
     ];
 
+    let mut next_sort_order_by_category: std::collections::HashMap<&str, i32> =
+        std::collections::HashMap::new();
     let activities = acts
         .into_iter()
-        .map(|(cat, id, name, freq, morning, noon, night)| Activity {
-            id: id.to_string(),
-            category_id: cat.to_string(),
-            name: name.to_string(),
-            target_freq_per_week: freq,
-            archived: false,
-            available_morning: morning,
-            available_noon: noon,
-            available_night: night,
+        .map(|(cat, id, name, freq, morning, noon, night)| {
+            let sort_order = *next_sort_order_by_category
+                .entry(cat)
+                .and_modify(|n| *n += 1)
+                .or_insert(0);
+            Activity {
+                id: id.to_string(),
+                category_id: cat.to_string(),
+                name: name.to_string(),
+                target_freq_per_week: freq,
+                archived: false,
+                available_morning: morning,
+                available_noon: noon,
+                available_night: night,
+                sort_order,
+            }
         })
         .collect();
 
@@ -98,13 +111,13 @@ impl Store {
         };
 
         let activity_ids_seen = load_activity_ids(&data_dir)?;
-        let vitals_ids_seen = load_vitals_ids(&data_dir)?;
+        let vitals_by_key = load_vitals_by_key(&data_dir)?;
 
         Ok(Store {
             data_dir,
             config: RwLock::new(config),
             activity_ids_seen: RwLock::new(activity_ids_seen),
-            vitals_ids_seen: RwLock::new(vitals_ids_seen),
+            vitals_by_key: RwLock::new(vitals_by_key),
         })
     }
 
@@ -172,51 +185,54 @@ impl Store {
         Ok(accepted)
     }
 
+    /// Upserts by (date, period): only the latest snapshot per day/period is kept.
+    /// Entries are accepted (and the whole file rewritten) whenever they are newer than
+    /// whatever is currently stored for that key, or no row exists for it yet.
     pub fn append_vitals(&self, entries: Vec<VitalsEntry>) -> Result<Vec<String>> {
         let path = self.vitals_log_path();
-        let is_new_file = !path.exists();
-        let mut seen = self.vitals_ids_seen.write();
+        let mut by_key = self.vitals_by_key.write();
 
-        let mut to_write = Vec::new();
         let mut accepted = Vec::new();
+        let mut changed = false;
         for e in entries {
-            if seen.contains(&e.id) {
-                continue;
+            let key = (e.date.to_string(), e.period.as_str().to_string());
+            let is_newer = by_key
+                .get(&key)
+                .map_or(true, |existing: &VitalsRow| {
+                    e.recorded_at_epoch_ms >= existing.recorded_at_epoch_ms
+                });
+            if is_newer {
+                by_key.insert(
+                    key,
+                    VitalsRow {
+                        date: e.date.to_string(),
+                        period: e.period.as_str().to_string(),
+                        mood: e.mood,
+                        alertness: e.alertness,
+                        energy: e.energy,
+                        pain: e.pain,
+                        satiety: e.satiety,
+                        hydration: e.hydration,
+                        notes: e.notes.clone().unwrap_or_default(),
+                        recorded_at_epoch_ms: e.recorded_at_epoch_ms,
+                    },
+                );
+                changed = true;
             }
-            seen.insert(e.id.clone());
             accepted.push(e.id.clone());
-            to_write.push(e);
-        }
-        drop(seen);
-
-        if to_write.is_empty() {
-            return Ok(accepted);
         }
 
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)?;
-        let mut wtr = csv::WriterBuilder::new()
-            .has_headers(is_new_file)
-            .from_writer(file);
+        if changed {
+            let mut rows: Vec<&VitalsRow> = by_key.values().collect();
+            rows.sort_by(|a, b| (&a.date, &a.period).cmp(&(&b.date, &b.period)));
 
-        for e in &to_write {
-            wtr.serialize(VitalsRow {
-                id: e.id.clone(),
-                date: e.date.to_string(),
-                period: e.period.as_str().to_string(),
-                mood: e.mood,
-                alertness: e.alertness,
-                energy: e.energy,
-                pain: e.pain,
-                satiety: e.satiety,
-                hydration: e.hydration,
-                notes: e.notes.clone().unwrap_or_default(),
-                recorded_at_epoch_ms: e.recorded_at_epoch_ms,
-            })?;
+            let file = File::create(&path)?;
+            let mut wtr = csv::WriterBuilder::new().has_headers(true).from_writer(file);
+            for row in rows {
+                wtr.serialize(row)?;
+            }
+            wtr.flush()?;
         }
-        wtr.flush()?;
 
         Ok(accepted)
     }
@@ -260,9 +276,8 @@ struct ActivityRow {
     recorded_at_epoch_ms: i64,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct VitalsRow {
-    id: String,
     date: String,
     period: String,
     mood: Option<i32>,
@@ -315,8 +330,9 @@ fn row_to_activity(r: ActivityRow) -> Option<ActivityEntry> {
 }
 
 fn row_to_vitals(r: VitalsRow) -> Option<VitalsEntry> {
+    let id = format!("{}-{}", r.date, r.period);
     Some(VitalsEntry {
-        id: r.id,
+        id,
         date: r.date.parse().ok()?,
         period: Period::parse(&r.period)?,
         mood: r.mood,
@@ -335,7 +351,11 @@ fn load_activity_ids(data_dir: &Path) -> Result<HashSet<String>> {
     Ok(rows.into_iter().map(|r| r.id).collect())
 }
 
-fn load_vitals_ids(data_dir: &Path) -> Result<HashSet<String>> {
+fn load_vitals_by_key(data_dir: &Path) -> Result<HashMap<VitalsKey, VitalsRow>> {
     let rows = read_vitals_rows(&data_dir.join(VITALS_LOG_CSV))?;
-    Ok(rows.into_iter().map(|r| r.id).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| ((r.date.clone(), r.period.clone()), r))
+        .collect())
 }
+

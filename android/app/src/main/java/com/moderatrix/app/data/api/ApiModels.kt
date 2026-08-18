@@ -4,7 +4,11 @@ import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 
 @JsonClass(generateAdapter = true)
-data class ApiCategory(val id: String, val name: String)
+data class ApiCategory(
+    val id: String,
+    val name: String,
+    @Json(name = "sort_order") val sortOrder: Int = 0
+)
 
 @JsonClass(generateAdapter = true)
 data class ApiActivity(
@@ -15,7 +19,8 @@ data class ApiActivity(
     val archived: Boolean,
     @Json(name = "available_morning") val availableMorning: Boolean = true,
     @Json(name = "available_noon") val availableNoon: Boolean = true,
-    @Json(name = "available_night") val availableNight: Boolean = true
+    @Json(name = "available_night") val availableNight: Boolean = true,
+    @Json(name = "sort_order") val sortOrder: Int = 0
 )
 
 @JsonClass(generateAdapter = true)

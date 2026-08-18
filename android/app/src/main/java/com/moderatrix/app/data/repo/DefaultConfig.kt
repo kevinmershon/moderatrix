@@ -10,7 +10,7 @@ object DefaultConfig {
         CategoryEntity("neuroplasticity", "Neuroplasticity"),
         CategoryEntity("creative", "Creative"),
         CategoryEntity("contradictory_factors", "Contradictory Factors")
-    )
+    ).mapIndexed { index, category -> category.copy(sortOrder = index) }
 
     val activities = listOf(
         ActivityDefEntity("productive_work", "existential", "Productive Work", 5, false),
@@ -39,5 +39,10 @@ object DefaultConfig {
         ActivityDefEntity("alcohol_kombucha_soda", "contradictory_factors", "Alcohol / Kombucha / Soda", 0, false),
         ActivityDefEntity("excess_snacking", "contradictory_factors", "Excess Snacking", 0, false),
         ActivityDefEntity("high_leisure_screen_time", "contradictory_factors", "High Leisure Screen Time", 0, false)
-    )
+    ).let { list ->
+        // sortOrder is relative within each category (recomputed per-category so drag reordering
+        // in the config screen only needs to touch the affected category's activities).
+        list.groupBy { it.categoryId }
+            .flatMap { (_, group) -> group.mapIndexed { index, activity -> activity.copy(sortOrder = index) } }
+    }
 }

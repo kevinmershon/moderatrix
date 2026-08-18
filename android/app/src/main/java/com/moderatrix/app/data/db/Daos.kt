@@ -80,16 +80,16 @@ interface ConfigDao {
     @Query("DELETE FROM activities")
     suspend fun clearActivities()
 
-    @Query("SELECT * FROM categories")
+    @Query("SELECT * FROM categories ORDER BY sortOrder ASC")
     fun observeCategories(): Flow<List<CategoryEntity>>
 
-    @Query("SELECT * FROM activities WHERE archived = 0")
+    @Query("SELECT * FROM activities WHERE archived = 0 ORDER BY sortOrder ASC")
     fun observeActivities(): Flow<List<ActivityDefEntity>>
 
-    @Query("SELECT * FROM activities")
+    @Query("SELECT * FROM activities ORDER BY sortOrder ASC")
     suspend fun getAllActivities(): List<ActivityDefEntity>
 
-    @Query("SELECT * FROM categories")
+    @Query("SELECT * FROM categories ORDER BY sortOrder ASC")
     suspend fun getAllCategories(): List<CategoryEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -97,4 +97,10 @@ interface ConfigDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertCategory(category: CategoryEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertActivities(activities: List<ActivityDefEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertCategories(categories: List<CategoryEntity>)
 }

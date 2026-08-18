@@ -32,6 +32,8 @@ impl Period {
 pub struct Category {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub sort_order: i32,
 }
 
 fn default_true() -> bool {
@@ -51,6 +53,8 @@ pub struct Activity {
     pub available_noon: bool,
     #[serde(default = "default_true")]
     pub available_night: bool,
+    #[serde(default)]
+    pub sort_order: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

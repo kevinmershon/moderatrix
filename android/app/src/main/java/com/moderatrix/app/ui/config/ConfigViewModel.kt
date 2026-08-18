@@ -42,10 +42,29 @@ class ConfigViewModel(application: Application) : AndroidViewModel(application) 
             val activityId = name.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_').ifBlank {
                 UUID.randomUUID().toString()
             }
+            val nextSortOrder = (uiState.value.activities.filter { it.categoryId == categoryId && !it.archived }
+                .maxOfOrNull { it.sortOrder } ?: -1) + 1
             repo.upsertActivityDef(
-                ActivityDefEntity(activityId, categoryId, name, targetFreqPerWeek, archived = false)
+                ActivityDefEntity(
+                    activityId, categoryId, name, targetFreqPerWeek, archived = false,
+                    sortOrder = nextSortOrder
+                )
             )
             pushConfigInBackground()
+        }
+    }
+
+    /** Persists a full drag-reorder of one category's activities. */
+    fun reorderActivities(orderedActivities: List<ActivityDefEntity>) {
+        viewModelScope.launch {
+            repo.reorderActivities(orderedActivities)
+        }
+    }
+
+    /** Persists a full drag-reorder of categories. */
+    fun reorderCategories(orderedCategories: List<CategoryEntity>) {
+        viewModelScope.launch {
+            repo.reorderCategories(orderedCategories)
         }
     }
 
@@ -67,7 +86,8 @@ class ConfigViewModel(application: Application) : AndroidViewModel(application) 
     fun addCategory(name: String) {
         viewModelScope.launch {
             val id = name.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
-            repo.upsertCategory(CategoryEntity(id, name))
+            val nextSortOrder = (uiState.value.categories.maxOfOrNull { it.sortOrder } ?: -1) + 1
+            repo.upsertCategory(CategoryEntity(id, name, nextSortOrder))
             pushConfigInBackground()
         }
     }

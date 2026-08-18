@@ -81,13 +81,18 @@ fun LogScreen(viewModel: LogViewModel = viewModel()) {
         }
 
         item {
-            VitalsCard(selectedPeriod = selectedPeriod, viewModel = viewModel)
+            val latestVitals = viewModel.latestVitalsForPeriod(selectedPeriod, state)
+            VitalsCard(selectedPeriod = selectedPeriod, latestVitals = latestVitals, viewModel = viewModel)
         }
     }
 }
 
 @Composable
-private fun VitalsCard(selectedPeriod: Period, viewModel: LogViewModel) {
+private fun VitalsCard(
+    selectedPeriod: Period,
+    latestVitals: com.moderatrix.app.data.db.VitalsEntryEntity?,
+    viewModel: LogViewModel
+) {
     var mood by remember { mutableIntStateOf(3) }
     var alertness by remember { mutableIntStateOf(3) }
     var energy by remember { mutableIntStateOf(3) }
@@ -96,6 +101,18 @@ private fun VitalsCard(selectedPeriod: Period, viewModel: LogViewModel) {
     var hydration by remember { mutableIntStateOf(3) }
     var notes by remember { mutableStateOf("") }
 
+    // Reload saved values whenever the selected period changes or a newer snapshot for it
+    // arrives (e.g. after sync), instead of always starting from hardcoded defaults.
+    LaunchedEffect(selectedPeriod, latestVitals?.id) {
+        mood = latestVitals?.mood ?: 3
+        alertness = latestVitals?.alertness ?: 3
+        energy = latestVitals?.energy ?: 3
+        pain = latestVitals?.pain ?: 0
+        satiety = latestVitals?.satiety ?: 3
+        hydration = latestVitals?.hydration ?: 3
+        notes = latestVitals?.notes ?: ""
+    }
+
     fun save() {
         viewModel.recordVitals(
             selectedPeriod, mood, alertness, energy, pain, satiety, hydration,
@@ -103,9 +120,14 @@ private fun VitalsCard(selectedPeriod: Period, viewModel: LogViewModel) {
         )
     }
 
-    // Debounce free-text notes so we don't write on every keystroke.
+    // Debounce free-text notes so we don't write on every keystroke. Skipped right after the
+    // reload effect above sets `notes` from storage, so that doesn't re-trigger a save.
+    var notesDirty by remember { mutableStateOf(false) }
+    LaunchedEffect(selectedPeriod, latestVitals?.id) {
+        notesDirty = false
+    }
     LaunchedEffect(notes) {
-        if (notes.isEmpty()) return@LaunchedEffect
+        if (!notesDirty) return@LaunchedEffect
         delay(800)
         save()
     }
@@ -123,7 +145,10 @@ private fun VitalsCard(selectedPeriod: Period, viewModel: LogViewModel) {
 
             OutlinedTextField(
                 value = notes,
-                onValueChange = { notes = it },
+                onValueChange = {
+                    notes = it
+                    notesDirty = true
+                },
                 label = { Text("Notes (optional, autosaves)") },
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
             )
