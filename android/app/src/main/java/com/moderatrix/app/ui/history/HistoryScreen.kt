@@ -50,13 +50,17 @@ fun HistoryScreen(viewModel: HistoryViewModel = viewModel()) {
 
                     Period.values().forEach { period ->
                         val doneActivities = day.activities.filter { it.done && it.period == period }
-                        val vitals = day.vitals.filter { it.period == period }
-                        if (doneActivities.isEmpty() && vitals.isEmpty()) return@forEach
+                        // Multiple vitals saves can happen within one period (each slider tweak
+                        // autosaves); only the most recent snapshot is meaningful to show.
+                        val latestVitals = day.vitals
+                            .filter { it.period == period }
+                            .maxByOrNull { it.recordedAtEpochMs }
+                        if (doneActivities.isEmpty() && latestVitals == null) return@forEach
 
                         PeriodSection(
                             period = period,
                             activities = doneActivities,
-                            vitals = vitals,
+                            vitals = latestVitals,
                             activityNames = activityNames
                         )
                     }
@@ -71,7 +75,7 @@ fun HistoryScreen(viewModel: HistoryViewModel = viewModel()) {
 private fun PeriodSection(
     period: Period,
     activities: List<ActivityEntryEntity>,
-    vitals: List<VitalsEntryEntity>,
+    vitals: VitalsEntryEntity?,
     activityNames: Map<String, String>
 ) {
     Column(modifier = Modifier.padding(top = 10.dp)) {
@@ -99,7 +103,7 @@ private fun PeriodSection(
             }
         }
 
-        vitals.forEach { v ->
+        vitals?.let { v ->
             Text(
                 "mood=${v.mood ?: "-"} alertness=${v.alertness ?: "-"} energy=${v.energy ?: "-"} " +
                     "pain=${v.pain ?: "-"} satiety=${v.satiety ?: "-"} hydration=${v.hydration ?: "-"}",
