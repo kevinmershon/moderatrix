@@ -10,6 +10,7 @@ use crate::model::{Activity, ActivityEntry, Category, Config, Period, VitalsEntr
 const ACTIVITY_LOG_CSV: &str = "activity_log.csv";
 const VITALS_LOG_CSV: &str = "vitals_log.csv";
 const CONFIG_JSON: &str = "config.json";
+const CONSOLIDATED_CSV: &str = "consolidated.csv";
 
 type VitalsKey = (String, String); // (date, period)
 
@@ -113,12 +114,14 @@ impl Store {
         let activity_ids_seen = load_activity_ids(&data_dir)?;
         let vitals_by_key = load_vitals_by_key(&data_dir)?;
 
-        Ok(Store {
+        let store = Store {
             data_dir,
             config: RwLock::new(config),
             activity_ids_seen: RwLock::new(activity_ids_seen),
             vitals_by_key: RwLock::new(vitals_by_key),
-        })
+        };
+        store.write_consolidated()?;
+        Ok(store)
     }
 
     pub fn get_config(&self) -> Config {
@@ -129,6 +132,7 @@ impl Store {
         let path = self.data_dir.join(CONFIG_JSON);
         fs::write(&path, serde_json::to_vec_pretty(&cfg)?)?;
         *self.config.write() = cfg;
+        self.write_consolidated()?;
         Ok(())
     }
 
@@ -182,6 +186,7 @@ impl Store {
         }
         wtr.flush()?;
 
+        self.write_consolidated()?;
         Ok(accepted)
     }
 
@@ -234,6 +239,7 @@ impl Store {
             wtr.flush()?;
         }
 
+        self.write_consolidated()?;
         Ok(accepted)
     }
 
@@ -263,6 +269,117 @@ impl Store {
             max = Some(max.map_or(r.recorded_at_epoch_ms, |m| m.max(r.recorded_at_epoch_ms)));
         }
         Ok(max)
+    }
+
+    /// Rewrites a normalized, spreadsheet-friendly view: one row per date, one column per
+    /// non-archived activity (1 if done in any period that day, else 0), then averaged vitals
+    /// across whatever periods were recorded that day, then notes from all periods concatenated
+    /// with period labels. Morning/noon/night detail is intentionally collapsed away here since
+    /// it isn't useful for day-over-day trend analysis in a spreadsheet.
+    fn write_consolidated(&self) -> Result<()> {
+        let config = self.config.read().clone();
+        let mut activities: Vec<&Activity> = config.activities.iter().filter(|a| !a.archived).collect();
+        activities.sort_by_key(|a| {
+            let cat_order = config
+                .categories
+                .iter()
+                .find(|c| c.id == a.category_id)
+                .map(|c| c.sort_order)
+                .unwrap_or(i32::MAX);
+            (cat_order, a.sort_order)
+        });
+
+        let activity_rows = read_activity_rows(&self.activity_log_path())?;
+        let vitals_rows = read_vitals_rows(&self.vitals_log_path())?;
+
+        let mut dates: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for r in &activity_rows {
+            dates.insert(r.date.clone());
+        }
+        for r in &vitals_rows {
+            dates.insert(r.date.clone());
+        }
+
+        let path = self.data_dir.join(CONSOLIDATED_CSV);
+        let file = File::create(&path)?;
+        let mut wtr = csv::WriterBuilder::new().from_writer(file);
+
+        let mut header: Vec<String> = vec!["date".to_string()];
+        header.extend(activities.iter().map(|a| a.name.clone()));
+        header.extend(
+            ["mood", "alertness", "energy", "pain", "satiety", "hydration"]
+                .iter()
+                .map(|s| s.to_string()),
+        );
+        header.push("notes".to_string());
+        wtr.write_record(&header)?;
+
+        for date in &dates {
+            let mut row: Vec<String> = vec![date.clone()];
+
+            let done_today: HashSet<&str> = activity_rows
+                .iter()
+                .filter(|r| &r.date == date && r.done)
+                .map(|r| r.activity_id.as_str())
+                .collect();
+            for activity in &activities {
+                row.push(if done_today.contains(activity.id.as_str()) { "1" } else { "0" }.to_string());
+            }
+
+            let day_vitals: Vec<&VitalsRow> = vitals_rows.iter().filter(|r| &r.date == date).collect();
+            for field in [
+                VitalsField::Mood,
+                VitalsField::Alertness,
+                VitalsField::Energy,
+                VitalsField::Pain,
+                VitalsField::Satiety,
+                VitalsField::Hydration,
+            ] {
+                let values: Vec<i32> = day_vitals.iter().filter_map(|r| field.get(r)).collect();
+                row.push(if values.is_empty() {
+                    String::new()
+                } else {
+                    let avg = values.iter().sum::<i32>() as f64 / values.len() as f64;
+                    format!("{:.1}", avg)
+                });
+            }
+
+            let notes = day_vitals
+                .iter()
+                .filter(|r| !r.notes.is_empty())
+                .map(|r| format!("[{}] {}", r.period, r.notes))
+                .collect::<Vec<_>>()
+                .join("; ");
+            row.push(notes);
+
+            wtr.write_record(&row)?;
+        }
+
+        wtr.flush()?;
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+enum VitalsField {
+    Mood,
+    Alertness,
+    Energy,
+    Pain,
+    Satiety,
+    Hydration,
+}
+
+impl VitalsField {
+    fn get(&self, row: &VitalsRow) -> Option<i32> {
+        match self {
+            VitalsField::Mood => row.mood,
+            VitalsField::Alertness => row.alertness,
+            VitalsField::Energy => row.energy,
+            VitalsField::Pain => row.pain,
+            VitalsField::Satiety => row.satiety,
+            VitalsField::Hydration => row.hydration,
+        }
     }
 }
 

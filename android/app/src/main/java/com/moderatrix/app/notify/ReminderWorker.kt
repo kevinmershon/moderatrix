@@ -20,17 +20,19 @@ class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWork
         val repo = ModeratrixRepo(applicationContext)
         val lastRecorded = repo.lastRecordedEpochMs()
         val now = System.currentTimeMillis()
-        val trigger = inputData.getString(KEY_TRIGGER) ?: "periodic_check"
+        val sinceLastRecorded = lastRecorded?.let { now - it }
 
+        // A fixed-time slot (8am/1pm/5pm/8pm) is skipped if something was already recorded
+        // within the same idle window used elsewhere — otherwise it fires unconditionally and
+        // can nag seconds after a check-in.
         val shouldNotify = when {
             lastRecorded == null -> true
-            trigger == "fixed_time" -> true
-            now - lastRecorded >= IDLE_THRESHOLD_MS -> true
+            sinceLastRecorded!! >= IDLE_THRESHOLD_MS -> true
             else -> false
         }
 
         if (shouldNotify) {
-            val hoursSince = lastRecorded?.let { (now - it) / (60 * 60 * 1000) }
+            val hoursSince = sinceLastRecorded?.let { it / (60 * 60 * 1000) }
             val text = if (hoursSince != null) {
                 "It's been $hoursSince hour(s) since your last entry. Log an activity or check-in."
             } else {
@@ -67,7 +69,6 @@ class ReminderWorker(context: Context, params: WorkerParameters) : CoroutineWork
     }
 
     companion object {
-        const val KEY_TRIGGER = "trigger"
         private const val PERIODIC_WORK_NAME = "moderatrix_idle_check"
 
         fun schedulePeriodic(context: Context) {
