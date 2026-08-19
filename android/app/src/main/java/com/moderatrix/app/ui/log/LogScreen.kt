@@ -21,6 +21,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -60,7 +61,8 @@ fun LogScreen(viewModel: LogViewModel = viewModel()) {
                         val done = viewModel.isDoneForPeriod(activity.id, selectedPeriod, state)
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             val label = if (activity.targetFreqPerWeek > 0) {
                                 "${activity.name} (${activity.targetFreqPerWeek}x/wk)"
