@@ -7,6 +7,7 @@ import com.moderatrix.app.data.repo.ModeratrixRepo
 import com.moderatrix.app.notify.Notifications
 import com.moderatrix.app.notify.ReminderScheduler
 import com.moderatrix.app.notify.ReminderWorker
+import com.moderatrix.app.notify.StaleActivityScheduler
 import com.moderatrix.app.sync.SyncWorker
 import kotlinx.coroutines.launch
 
@@ -17,6 +18,7 @@ class ModeratrixApp : Application() {
         Notifications.ensureChannel(this)
         ReminderScheduler.scheduleAll(this)
         ReminderWorker.schedulePeriodic(this)
+        StaleActivityScheduler.scheduleForToday(this)
         SyncWorker.schedulePeriodic(this)
 
         ProcessLifecycleOwner.get().lifecycleScope.launch {

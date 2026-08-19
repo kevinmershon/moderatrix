@@ -10,6 +10,7 @@ class BootReceiver : BroadcastReceiver() {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
             ReminderScheduler.scheduleAll(context)
             ReminderWorker.schedulePeriodic(context)
+            StaleActivityScheduler.scheduleForToday(context)
             SyncWorker.schedulePeriodic(context)
         }
     }

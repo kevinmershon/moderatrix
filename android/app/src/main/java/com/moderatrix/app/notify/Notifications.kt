@@ -11,8 +11,10 @@ import android.content.Intent
 
 const val CHANNEL_ID = "moderatrix_reminders"
 const val SYNC_CHANNEL_ID = "moderatrix_sync_status"
+const val STALE_ACTIVITY_CHANNEL_ID = "moderatrix_stale_activity"
 const val NOTIFICATION_ID_REMINDER = 1001
 const val NOTIFICATION_ID_SYNC_STALE = 1002
+const val NOTIFICATION_ID_STALE_ACTIVITY = 1003
 
 object Notifications {
     fun ensureChannel(context: Context) {
@@ -36,6 +38,15 @@ object Notifications {
                     description = "Warns when the app hasn't been able to sync with the server"
                 }
             )
+            manager.createNotificationChannel(
+                NotificationChannel(
+                    STALE_ACTIVITY_CHANNEL_ID,
+                    "Moderatrix Activity Nudges",
+                    NotificationManager.IMPORTANCE_DEFAULT
+                ).apply {
+                    description = "Nudges about activities you haven't done in a while"
+                }
+            )
         }
     }
 
@@ -45,6 +56,10 @@ object Notifications {
 
     fun showSyncStale(context: Context, title: String, text: String) {
         show(context, SYNC_CHANNEL_ID, NOTIFICATION_ID_SYNC_STALE, title, text)
+    }
+
+    fun showStaleActivity(context: Context, title: String, text: String) {
+        show(context, STALE_ACTIVITY_CHANNEL_ID, NOTIFICATION_ID_STALE_ACTIVITY, title, text)
     }
 
     private fun show(context: Context, channelId: String, notificationId: Int, title: String, text: String) {

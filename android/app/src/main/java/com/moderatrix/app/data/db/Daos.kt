@@ -29,7 +29,18 @@ interface ActivityEntryDao {
 
     @Query("SELECT date, period, activityId FROM activity_entries WHERE date >= :sinceDate")
     suspend fun completionsSince(sinceDate: String): List<ActivityCompletionRow>
+
+    @Query(
+        "SELECT activityId, MAX(recordedAtEpochMs) as lastDoneEpochMs " +
+            "FROM activity_entries WHERE done = 1 GROUP BY activityId"
+    )
+    suspend fun lastDoneEpochMsByActivity(): List<LastDoneRow>
 }
+
+data class LastDoneRow(
+    val activityId: String,
+    val lastDoneEpochMs: Long
+)
 
 data class ActivityCompletionRow(
     val date: String,

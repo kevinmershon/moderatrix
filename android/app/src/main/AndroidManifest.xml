@@ -38,6 +38,10 @@
             android:name=".notify.ReminderAlarmReceiver"
             android:exported="false" />
 
+        <receiver
+            android:name=".notify.StaleActivityAlarmReceiver"
+            android:exported="false" />
+
     </application>
 
 </manifest>

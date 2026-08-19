@@ -19,6 +19,11 @@ import kotlinx.coroutines.flow.Flow
 import java.time.LocalDate
 import java.util.UUID
 
+data class StaleActivity(
+    val activity: ActivityDefEntity,
+    val daysSinceLastDone: Double
+)
+
 private const val TAG = "ModeratrixRepo"
 
 class ModeratrixRepo(context: Context) {
@@ -114,6 +119,34 @@ class ModeratrixRepo(context: Context) {
         )
         vitalsDao.upsert(entry)
         triggerSyncBestEffort()
+    }
+
+    /**
+     * Picks the single most "overdue" non-archived, non-zero-frequency activity, ranked by
+     * (days since last done) / (days between occurrences implied by its weekly target) — an
+     * activity due daily that's been skipped 2 days ranks more overdue than one due weekly
+     * skipped 2 days. An activity with no completion history yet is treated as overdue since
+     * account creation (the earliest we have any basis to measure from), which naturally makes
+     * it a strong candidate without being an unbounded/infinite value.
+     */
+    suspend fun mostStaleActivity(): StaleActivity? {
+        val now = System.currentTimeMillis()
+        val eligible = configDao.getAllActivities().filter { !it.archived && it.targetFreqPerWeek > 0 }
+        if (eligible.isEmpty()) return null
+
+        val lastDoneByActivity = activityDao.lastDoneEpochMsByActivity()
+            .associate { it.activityId to it.lastDoneEpochMs }
+        val earliestKnownEpochMs = lastDoneByActivity.values.minOrNull() ?: now
+
+        return eligible.map { activity ->
+            val lastDoneMs = lastDoneByActivity[activity.id] ?: earliestKnownEpochMs
+            val daysSinceLastDone = (now - lastDoneMs) / (24.0 * 60 * 60 * 1000)
+            val expectedGapDays = 7.0 / activity.targetFreqPerWeek
+            val staleness = daysSinceLastDone / expectedGapDays
+            Triple(activity, daysSinceLastDone, staleness)
+        }.maxByOrNull { it.third }?.let { (activity, daysSinceLastDone, _) ->
+            StaleActivity(activity, daysSinceLastDone)
+        }
     }
 
     suspend fun lastRecordedEpochMs(): Long? {
