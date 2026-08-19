@@ -122,7 +122,9 @@ class ModeratrixRepo(context: Context) {
     }
 
     /**
-     * Picks the single most "overdue" non-archived, non-zero-frequency activity, ranked by
+     * Picks a non-archived, non-zero-frequency activity to nudge about, weighted-randomly among
+     * the most "overdue" candidates rather than always the single most overdue one — otherwise
+     * every nudge names the exact same activity until it's done. Overdue-ness is ranked by
      * (days since last done) / (days between occurrences implied by its weekly target) — an
      * activity due daily that's been skipped 2 days ranks more overdue than one due weekly
      * skipped 2 days. An activity with no completion history yet is treated as overdue since
@@ -138,15 +140,24 @@ class ModeratrixRepo(context: Context) {
             .associate { it.activityId to it.lastDoneEpochMs }
         val earliestKnownEpochMs = lastDoneByActivity.values.minOrNull() ?: now
 
-        return eligible.map { activity ->
+        val scored = eligible.map { activity ->
             val lastDoneMs = lastDoneByActivity[activity.id] ?: earliestKnownEpochMs
             val daysSinceLastDone = (now - lastDoneMs) / (24.0 * 60 * 60 * 1000)
             val expectedGapDays = 7.0 / activity.targetFreqPerWeek
             val staleness = daysSinceLastDone / expectedGapDays
-            Triple(activity, daysSinceLastDone, staleness)
-        }.maxByOrNull { it.third }?.let { (activity, daysSinceLastDone, _) ->
-            StaleActivity(activity, daysSinceLastDone)
+            StaleActivity(activity, daysSinceLastDone) to staleness
+        }.sortedByDescending { it.second }
+
+        val topCandidates = scored.take(3).filter { it.second > 0 }
+        if (topCandidates.isEmpty()) return scored.firstOrNull()?.first
+
+        val totalWeight = topCandidates.sumOf { it.second }
+        var roll = kotlin.random.Random.nextDouble() * totalWeight
+        for ((staleActivity, weight) in topCandidates) {
+            roll -= weight
+            if (roll <= 0) return staleActivity
         }
+        return topCandidates.first().first
     }
 
     suspend fun lastRecordedEpochMs(): Long? {

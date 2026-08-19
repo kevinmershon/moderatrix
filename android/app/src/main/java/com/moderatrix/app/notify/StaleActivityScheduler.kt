@@ -24,26 +24,36 @@ object StaleActivityScheduler {
     private const val REQUEST_CODE_SLOT_1 = 4300
     private const val REQUEST_CODE_SLOT_2 = 4301
     private const val PREFS_NAME = "stale_activity_scheduler"
-    private const val KEY_LAST_SCHEDULED_DATE = "last_scheduled_date"
+    // The calendar date whose two request-code slots were armed by scheduleForToday. Separate
+    // from [KEY_TOMORROW_ARMED_DATE] because "today" and "tomorrow" are two different questions
+    // that both get asked on the same calendar day (once a slot fires, tomorrow gets armed while
+    // today is still in progress) — a single shared marker can't answer both correctly at once.
+    private const val KEY_TODAY_ARMED_DATE = "today_armed_date"
+    // The calendar date whose two request-code slots were pre-armed a day ahead by
+    // scheduleForTomorrow, so that when that date actually becomes "today", scheduleForToday
+    // knows not to re-roll/re-arm alarms that are already correctly scheduled.
+    private const val KEY_TOMORROW_ARMED_DATE = "tomorrow_armed_date"
 
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     /**
-     * Rolls today's two random times and schedules alarms for them, but only the first time this
-     * is called on a given calendar day — safe to call from multiple entry points (app launch,
-     * boot) without re-rolling already-armed times. If a picked time has already passed (e.g. the
-     * app wasn't opened until evening), that slot fires shortly instead of being skipped outright,
-     * as long as we're still within the window — otherwise a whole day could pass with zero
-     * nudges. If shifting one slot to "fire soon" would leave less than the minimum gap before
-     * the other slot's effective time, the later slot is dropped for today rather than firing
-     * both close together.
+     * Rolls today's two random times and schedules alarms for them, but only if today doesn't
+     * already have a pair armed (whether from an earlier call this same day, or rolled ahead of
+     * time yesterday via [scheduleForTomorrow]) — safe to call from multiple entry points (app
+     * launch, boot) without re-rolling already-armed times. If a picked time has already passed
+     * (e.g. the app wasn't opened until evening), that slot fires shortly instead of being
+     * skipped outright, as long as we're still within the window — otherwise a whole day could
+     * pass with zero nudges. If shifting one slot to "fire soon" would leave less than the
+     * minimum gap before the other slot's effective time, the later slot is dropped for today
+     * rather than firing both close together.
      */
     fun scheduleForToday(context: Context) {
         val today = LocalDate.now()
         val prefs = prefs(context)
-        val lastScheduledDate = prefs.getString(KEY_LAST_SCHEDULED_DATE, null)
-        if (lastScheduledDate == today.toString()) return
+        val alreadyArmed = prefs.getString(KEY_TODAY_ARMED_DATE, null) == today.toString() ||
+            prefs.getString(KEY_TOMORROW_ARMED_DATE, null) == today.toString()
+        if (alreadyArmed) return
 
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val now = LocalDateTime.now()
@@ -71,19 +81,26 @@ object StaleActivityScheduler {
             scheduleAt(context, alarmManager, effectiveDateTime, requestCode)
         }
 
-        prefs.edit().putString(KEY_LAST_SCHEDULED_DATE, today.toString()).apply()
+        prefs.edit().putString(KEY_TODAY_ARMED_DATE, today.toString()).apply()
     }
 
-    /** Called after a slot fires, to roll tomorrow's pair fresh (avoids the same time every day). */
+    /**
+     * Called after a slot fires, to roll tomorrow's pair fresh (avoids the same time every day).
+     * Idempotent per calendar day — both of today's slots fire on the same day and each calls
+     * this, but only the first such call actually rolls/schedules; the second is a no-op so the
+     * pair isn't re-rolled (and re-armed) out from under itself.
+     */
     fun scheduleForTomorrow(context: Context) {
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val tomorrow = LocalDate.now().plusDays(1)
+        val prefs = prefs(context)
+        if (prefs.getString(KEY_TOMORROW_ARMED_DATE, null) == tomorrow.toString()) return
 
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val (time1, time2) = pickTwoTimes()
         scheduleAt(context, alarmManager, LocalDateTime.of(tomorrow, time1), REQUEST_CODE_SLOT_1)
         scheduleAt(context, alarmManager, LocalDateTime.of(tomorrow, time2), REQUEST_CODE_SLOT_2)
 
-        prefs(context).edit().putString(KEY_LAST_SCHEDULED_DATE, tomorrow.toString()).apply()
+        prefs.edit().putString(KEY_TOMORROW_ARMED_DATE, tomorrow.toString()).apply()
     }
 
     private fun pickTwoTimes(): Pair<LocalTime, LocalTime> {
