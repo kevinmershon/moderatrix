@@ -305,7 +305,7 @@ impl Store {
         let mut wtr = csv::WriterBuilder::new().from_writer(file);
 
         let mut header: Vec<String> = vec!["date".to_string()];
-        header.extend(activities.iter().map(|a| a.name.clone()));
+        header.extend(activities.iter().map(|a| strip_emoji(&a.name)));
         header.extend(
             ["mood", "alertness", "energy", "pain", "satiety", "hydration"]
                 .iter()
@@ -461,6 +461,31 @@ fn row_to_vitals(r: VitalsRow) -> Option<VitalsEntry> {
         notes: if r.notes.is_empty() { None } else { Some(r.notes) },
         recorded_at_epoch_ms: r.recorded_at_epoch_ms,
     })
+}
+
+/// Strips emoji and related symbol/pictograph characters from a name for CSV export, along with
+/// any resulting leading/trailing whitespace. Activity names in the app may include emoji as
+/// visual decoration, but spreadsheet column headers should stay plain text.
+fn strip_emoji(s: &str) -> String {
+    let is_emoji_like = |c: char| {
+        let cp = c as u32;
+        matches!(cp,
+            0x1F300..=0x1FAFF   // misc symbols/pictographs, transport, supplemental symbols, emoticons, dingbats, symbols&pictographs extended-A
+            | 0x2600..=0x27BF   // misc symbols, dingbats
+            | 0x2190..=0x21FF   // arrows (commonly used as emoji-adjacent, e.g. ↩️)
+            | 0x2300..=0x23FF   // misc technical (includes ⏰ etc.)
+            | 0x2B00..=0x2BFF   // misc symbols and arrows
+            | 0xFE00..=0xFE0F   // variation selectors
+            | 0x200D            // zero-width joiner
+            | 0x1F1E6..=0x1F1FF // regional indicators (flags)
+        )
+    };
+    s.chars()
+        .filter(|c| !is_emoji_like(*c))
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn load_activity_ids(data_dir: &Path) -> Result<HashSet<String>> {

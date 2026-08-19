@@ -98,6 +98,13 @@ class ConfigViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun renameCategory(category: CategoryEntity, newName: String) {
+        viewModelScope.launch {
+            repo.upsertCategory(category.copy(name = newName))
+            pushConfigInBackground()
+        }
+    }
+
     fun addCategory(name: String) {
         viewModelScope.launch {
             val id = name.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
@@ -115,6 +122,7 @@ class ConfigViewModel(application: Application) : AndroidViewModel(application) 
 
     fun syncNow() {
         SyncWorker.triggerOneOff(getApplication())
+        pushConfigInBackground()
     }
 
     private fun pushConfigInBackground() {

@@ -74,6 +74,7 @@ fun ConfigScreen(viewModel: ConfigViewModel = viewModel()) {
     var serverUrlField by remember(state.serverUrl) { mutableStateOf(state.serverUrl) }
     var categoryMenuExpanded by remember { mutableStateOf(false) }
     var editingActivity by remember { mutableStateOf<ActivityDefEntity?>(null) }
+    var editingCategory by remember { mutableStateOf<CategoryEntity?>(null) }
 
     // Local working order of activities, per category, so a drag feels immediate; committed to
     // the ViewModel (and thus the server) once the drag ends. Rebuilt whenever the underlying
@@ -95,6 +96,17 @@ fun ConfigScreen(viewModel: ConfigViewModel = viewModel()) {
             onRemove = {
                 viewModel.archiveActivity(activity)
                 editingActivity = null
+            }
+        )
+    }
+
+    editingCategory?.let { category ->
+        EditCategoryDialog(
+            category = category,
+            onDismiss = { editingCategory = null },
+            onSave = { newName ->
+                viewModel.renameCategory(category, newName)
+                editingCategory = null
             }
         )
     }
@@ -163,7 +175,7 @@ fun ConfigScreen(viewModel: ConfigViewModel = viewModel()) {
 
                 is ConfigRow.CategoriesHeader -> {
                     Text(
-                        "Categories (use arrows to reorder)",
+                        "Categories (tap to rename, arrows to reorder)",
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.padding(top = 8.dp)
                     )
@@ -174,7 +186,12 @@ fun ConfigScreen(viewModel: ConfigViewModel = viewModel()) {
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
                     ) {
-                        Text(row.category.name, modifier = Modifier.weight(1f))
+                        Text(
+                            row.category.name,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { editingCategory = row.category }
+                        )
                         IconButton(
                             enabled = !row.isFirst,
                             onClick = { viewModel.moveCategory(row.category, -1) }
@@ -328,6 +345,36 @@ private fun periodSummary(activity: ActivityDefEntity): String {
     if (activity.availableNoon) parts.add("Noon")
     if (activity.availableNight) parts.add("Night")
     return if (parts.size == 3) "All day" else parts.joinToString("/")
+}
+
+@Composable
+private fun EditCategoryDialog(
+    category: CategoryEntity,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit
+) {
+    var name by remember(category.id) { mutableStateOf(category.name) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename category") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Name") },
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        confirmButton = {
+            Button(onClick = { onSave(name) }, enabled = name.isNotBlank()) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 @Composable
