@@ -1,6 +1,7 @@
 # Rust
 /server/target/
 /server/data/
+/server/.env
 
 # Android / Gradle
 /android/.gradle/
