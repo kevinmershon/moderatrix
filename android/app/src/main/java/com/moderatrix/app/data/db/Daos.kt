@@ -35,6 +35,12 @@ interface ActivityEntryDao {
             "FROM activity_entries WHERE done = 1 GROUP BY activityId"
     )
     suspend fun lastDoneEpochMsByActivity(): List<LastDoneRow>
+
+    @Query(
+        "SELECT activityId, MAX(recordedAtEpochMs) as lastDoneEpochMs " +
+            "FROM activity_entries WHERE done = 1 GROUP BY activityId"
+    )
+    fun observeLastDoneEpochMsByActivity(): Flow<List<LastDoneRow>>
 }
 
 data class LastDoneRow(

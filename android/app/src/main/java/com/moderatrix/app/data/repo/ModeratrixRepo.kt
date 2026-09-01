@@ -16,12 +16,19 @@ import com.moderatrix.app.data.db.CategoryEntity
 import com.moderatrix.app.data.db.Period
 import com.moderatrix.app.data.db.VitalsEntryEntity
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import java.time.LocalDate
 import java.util.UUID
 
 data class StaleActivity(
     val activity: ActivityDefEntity,
     val daysSinceLastDone: Double
+)
+
+data class OverdueActivity(
+    val activity: ActivityDefEntity,
+    val daysSinceLastDone: Double,
+    val staleness: Double
 )
 
 private const val TAG = "ModeratrixRepo"
@@ -132,32 +139,69 @@ class ModeratrixRepo(context: Context) {
      * it a strong candidate without being an unbounded/infinite value.
      */
     suspend fun mostStaleActivity(): StaleActivity? {
-        val now = System.currentTimeMillis()
-        val eligible = configDao.getAllActivities().filter { !it.archived && it.targetFreqPerWeek > 0 }
-        if (eligible.isEmpty()) return null
+        val scored = scoreStaleness()
+        if (scored.isEmpty()) return null
 
+        val topCandidates = scored.take(3).filter { it.staleness > 0 }
+        if (topCandidates.isEmpty()) {
+            return scored.firstOrNull()?.let { StaleActivity(it.activity, it.daysSinceLastDone) }
+        }
+
+        val totalWeight = topCandidates.sumOf { it.staleness }
+        var roll = kotlin.random.Random.nextDouble() * totalWeight
+        for (candidate in topCandidates) {
+            roll -= candidate.staleness
+            if (roll <= 0) return StaleActivity(candidate.activity, candidate.daysSinceLastDone)
+        }
+        return topCandidates.first().let { StaleActivity(it.activity, it.daysSinceLastDone) }
+    }
+
+    /**
+     * Returns the [limit] most overdue activities, ranked by the same staleness formula as
+     * [mostStaleActivity]: (days since last done) / (days between occurrences implied by its
+     * weekly target). Unlike [mostStaleActivity] this is a deterministic ranking (no weighted
+     * random pick) intended for display, e.g. an "Overdue" list screen.
+     */
+    suspend fun topOverdueActivities(limit: Int = 10): List<OverdueActivity> =
+        scoreStaleness().take(limit)
+
+    /**
+     * Reactive version of [topOverdueActivities]: re-emits whenever activity completions or the
+     * activity/category config change, so a screen collecting this updates live as the user
+     * checks activities off elsewhere in the app.
+     */
+    fun observeTopOverdueActivities(limit: Int = 10): Flow<List<OverdueActivity>> =
+        combine(
+            activityDao.observeLastDoneEpochMsByActivity(),
+            configDao.observeActivities()
+        ) { lastDoneRows, allActivities ->
+            val eligible = allActivities.filter { !it.archived && it.targetFreqPerWeek > 0 }
+            val lastDoneByActivity = lastDoneRows.associate { it.activityId to it.lastDoneEpochMs }
+            scoreStalenessFrom(eligible, lastDoneByActivity).take(limit)
+        }
+
+    private suspend fun scoreStaleness(): List<OverdueActivity> {
+        val eligible = configDao.getAllActivities().filter { !it.archived && it.targetFreqPerWeek > 0 }
         val lastDoneByActivity = activityDao.lastDoneEpochMsByActivity()
             .associate { it.activityId to it.lastDoneEpochMs }
+        return scoreStalenessFrom(eligible, lastDoneByActivity)
+    }
+
+    private fun scoreStalenessFrom(
+        eligible: List<ActivityDefEntity>,
+        lastDoneByActivity: Map<String, Long>
+    ): List<OverdueActivity> {
+        if (eligible.isEmpty()) return emptyList()
+        val now = System.currentTimeMillis()
         val earliestKnownEpochMs = lastDoneByActivity.values.minOrNull() ?: now
 
-        val scored = eligible.map { activity ->
+        return eligible.map { activity ->
             val lastDoneMs = lastDoneByActivity[activity.id] ?: earliestKnownEpochMs
             val daysSinceLastDone = (now - lastDoneMs) / (24.0 * 60 * 60 * 1000)
             val expectedGapDays = 7.0 / activity.targetFreqPerWeek
             val staleness = daysSinceLastDone / expectedGapDays
-            StaleActivity(activity, daysSinceLastDone) to staleness
-        }.sortedByDescending { it.second }
-
-        val topCandidates = scored.take(3).filter { it.second > 0 }
-        if (topCandidates.isEmpty()) return scored.firstOrNull()?.first
-
-        val totalWeight = topCandidates.sumOf { it.second }
-        var roll = kotlin.random.Random.nextDouble() * totalWeight
-        for ((staleActivity, weight) in topCandidates) {
-            roll -= weight
-            if (roll <= 0) return staleActivity
-        }
-        return topCandidates.first().first
+            OverdueActivity(activity, daysSinceLastDone, staleness)
+        }.sortedByDescending { it.staleness }
     }
 
     suspend fun lastRecordedEpochMs(): Long? {

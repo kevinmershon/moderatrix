@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -27,6 +28,7 @@ import androidx.navigation.compose.rememberNavController
 import com.moderatrix.app.ui.config.ConfigScreen
 import com.moderatrix.app.ui.history.HistoryScreen
 import com.moderatrix.app.ui.log.LogScreen
+import com.moderatrix.app.ui.overdue.OverdueScreen
 import com.moderatrix.app.ui.theme.ModeratrixTheme
 
 class MainActivity : ComponentActivity() {
@@ -61,6 +63,7 @@ private fun MainScaffold() {
     val navController = rememberNavController()
     val tabs = listOf(
         Tab("log", "Today", Icons.Filled.Edit),
+        Tab("overdue", "Overdue", Icons.Filled.Warning),
         Tab("history", "History", Icons.Filled.DateRange),
         Tab("config", "Config", Icons.Filled.List)
     )
@@ -93,6 +96,7 @@ private fun MainScaffold() {
             modifier = Modifier.padding(padding)
         ) {
             composable("log") { LogScreen() }
+            composable("overdue") { OverdueScreen() }
             composable("history") { HistoryScreen() }
             composable("config") { ConfigScreen() }
         }
